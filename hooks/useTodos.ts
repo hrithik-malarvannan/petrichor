@@ -1,93 +1,82 @@
 ﻿'use client'
 import { useState, useEffect, useCallback } from 'react'
-import type { Todo, TodoState } from '@/lib/types'
+import type { Todo } from '@/lib/types'
 
-const KEY = 'petrichor-todos'
-const genId = () => Math.random().toString(36).slice(2, 10)
 const today = () => new Date().toISOString().slice(0, 10)
-const EMPTY: TodoState = { daily: {}, general: [] }
 
-function load(): TodoState {
-  if (typeof window === 'undefined') return EMPTY
-  try {
-    const raw = window.localStorage.getItem(KEY)
-    return raw ? { ...EMPTY, ...JSON.parse(raw) } : EMPTY
-  } catch { return EMPTY }
+async function api(path: string, options?: RequestInit) {
+  const res = await fetch(path, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) },
+  })
+  if (!res.ok) throw new Error(await res.text().catch(() => 'Request failed'))
+  return res.json()
 }
 
-function persist(state: TodoState) {
-  try { window.localStorage.setItem(KEY, JSON.stringify(state)) } catch {}
-}
-
-function makeTodo(text: string, date: string | null, position: number): Todo {
-  const now = new Date().toISOString()
-  return { id: genId(), user_id: 'local', date, text, priority: 'none', done: false, position, created_at: now, updated_at: now }
+function split(todos: Todo[]) {
+  const daily: Record<string, Todo[]> = {}
+  const general: Todo[] = []
+  for (const t of todos) {
+    if (t.date) { (daily[t.date] ||= []).push(t) }
+    else general.push(t)
+  }
+  return { daily, general }
 }
 
 export function useTodos() {
-  const [state, setState] = useState<TodoState>(EMPTY)
+  const [all, setAll] = useState<Todo[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    setState(load())
-    setLoading(false)
+    api('/api/todos').then(setAll).catch(() => {}).finally(() => setLoading(false))
   }, [])
 
   const addDailyTodo = useCallback((text: string, date: string = today()) => {
-    setState(prev => {
-      const list = prev.daily[date] || []
-      const next = { ...prev, daily: { ...prev.daily, [date]: [...list, makeTodo(text, date, list.length)] } }
-      persist(next)
-      return next
+    setAll(prev => {
+      const position = prev.filter(t => t.date === date).length
+      api('/api/todos', { method: 'POST', body: JSON.stringify({ text, date, priority: 'none', done: false, position }) })
+        .then((created: Todo) => setAll(p => [...p, created]))
+        .catch(() => {})
+      return prev
     })
   }, [])
 
   const addGeneralTodo = useCallback((text: string) => {
-    setState(prev => {
-      const next = { ...prev, general: [...prev.general, makeTodo(text, null, prev.general.length)] }
-      persist(next)
-      return next
+    setAll(prev => {
+      const position = prev.filter(t => t.date === null).length
+      api('/api/todos', { method: 'POST', body: JSON.stringify({ text, date: null, priority: 'none', done: false, position }) })
+        .then((created: Todo) => setAll(p => [...p, created]))
+        .catch(() => {})
+      return prev
     })
   }, [])
 
-  const toggleDailyTodo = useCallback((id: string, date: string = today()) => {
-    setState(prev => {
-      const list = (prev.daily[date] || []).map(t => (t.id === id ? { ...t, done: !t.done } : t))
-      const next = { ...prev, daily: { ...prev.daily, [date]: list } }
-      persist(next)
-      return next
-    })
-  }, [])
+  const toggleDailyTodo = useCallback((id: string) => {
+    setAll(prev => prev.map(t => (t.id === id ? { ...t, done: !t.done } : t)))
+    const cur = all.find(t => t.id === id)
+    api(`/api/todos/${id}`, { method: 'PATCH', body: JSON.stringify({ done: !cur?.done }) }).catch(() => {})
+  }, [all])
 
   const toggleGeneralTodo = useCallback((id: string) => {
-    setState(prev => {
-      const next = { ...prev, general: prev.general.map(t => (t.id === id ? { ...t, done: !t.done } : t)) }
-      persist(next)
-      return next
-    })
-  }, [])
+    setAll(prev => prev.map(t => (t.id === id ? { ...t, done: !t.done } : t)))
+    const cur = all.find(t => t.id === id)
+    api(`/api/todos/${id}`, { method: 'PATCH', body: JSON.stringify({ done: !cur?.done }) }).catch(() => {})
+  }, [all])
 
-  const deleteDailyTodo = useCallback((id: string, date: string = today()) => {
-    setState(prev => {
-      const list = (prev.daily[date] || []).filter(t => t.id !== id)
-      const next = { ...prev, daily: { ...prev.daily, [date]: list } }
-      persist(next)
-      return next
-    })
+  const deleteDailyTodo = useCallback((id: string) => {
+    setAll(prev => prev.filter(t => t.id !== id))
+    api(`/api/todos/${id}`, { method: 'DELETE' }).catch(() => {})
   }, [])
 
   const deleteGeneralTodo = useCallback((id: string) => {
-    setState(prev => {
-      const next = { ...prev, general: prev.general.filter(t => t.id !== id) }
-      persist(next)
-      return next
-    })
+    setAll(prev => prev.filter(t => t.id !== id))
+    api(`/api/todos/${id}`, { method: 'DELETE' }).catch(() => {})
   }, [])
 
+  const { daily, general } = split(all)
+
   return {
-    daily: state.daily,
-    general: state.general,
-    loading,
+    daily, general, loading,
     addDailyTodo, addGeneralTodo,
     toggleDailyTodo, toggleGeneralTodo,
     deleteDailyTodo, deleteGeneralTodo,

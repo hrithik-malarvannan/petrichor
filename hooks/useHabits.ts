@@ -2,19 +2,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { Habit, HabitInsert, HabitUpdate } from '@/lib/types'
 
-const KEY = 'petrichor-habits'
-const genId = () => Math.random().toString(36).slice(2, 10)
-
-function load(): Habit[] {
-  if (typeof window === 'undefined') return []
-  try {
-    const raw = window.localStorage.getItem(KEY)
-    return raw ? JSON.parse(raw) : []
-  } catch { return [] }
-}
-
-function persist(habits: Habit[]) {
-  try { window.localStorage.setItem(KEY, JSON.stringify(habits)) } catch {}
+async function api(path: string, options?: RequestInit) {
+  const res = await fetch(path, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) },
+  })
+  if (!res.ok) throw new Error(await res.text().catch(() => 'Request failed'))
+  return res.json()
 }
 
 export function useHabits() {
@@ -22,42 +16,34 @@ export function useHabits() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    setHabits(load())
-    setLoading(false)
+    api('/api/habits')
+      .then(setHabits)
+      .catch(() => {})
+      .finally(() => setLoading(false))
   }, [])
 
   const addHabit = useCallback(async (data: HabitInsert) => {
-    const now = new Date().toISOString()
-    setHabits(prev => {
-      const next: Habit[] = [
-        ...prev,
-        { id: genId(), user_id: 'local', created_at: now, updated_at: now, ...data },
-      ]
-      persist(next)
-      return next
-    })
+    const created: Habit = await api('/api/habits', { method: 'POST', body: JSON.stringify(data) })
+    setHabits(prev => [...prev, created])
   }, [])
 
   const updateHabit = useCallback(async (id: string, data: HabitUpdate) => {
-    setHabits(prev => {
-      const next = prev.map(h => (h.id === id ? { ...h, ...data, updated_at: new Date().toISOString() } : h))
-      persist(next)
-      return next
-    })
+    const updated: Habit = await api(`/api/habits/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+    setHabits(prev => prev.map(h => (h.id === id ? updated : h)))
   }, [])
 
   const removeHabit = useCallback(async (id: string) => {
-    setHabits(prev => {
-      const next = prev.filter(h => h.id !== id)
-      persist(next)
-      return next
-    })
+    await api(`/api/habits/${id}`, { method: 'DELETE' })
+    setHabits(prev => prev.filter(h => h.id !== id))
   }, [])
 
   const reorderHabits = useCallback((next: Habit[]) => {
     const withPositions = next.map((h, i) => ({ ...h, position: i }))
     setHabits(withPositions)
-    persist(withPositions)
+    api('/api/habits/reorder', {
+      method: 'POST',
+      body: JSON.stringify({ ids: withPositions.map(h => h.id) }),
+    }).catch(() => {})
   }, [])
 
   return { habits, loading, addHabit, updateHabit, removeHabit, reorderHabits }

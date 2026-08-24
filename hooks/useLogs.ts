@@ -1,20 +1,36 @@
 ﻿'use client'
 import { useState, useEffect, useCallback } from 'react'
-import type { LogMap, SummaryMap } from '@/lib/types'
+import type { LogMap, SummaryMap, HabitLog, DaySummary } from '@/lib/types'
 
-const LOGS_KEY = 'petrichor-logs'
-const SUMMARIES_KEY = 'petrichor-summaries'
-
-function loadJSON<T>(key: string, fallback: T): T {
-  if (typeof window === 'undefined') return fallback
-  try {
-    const raw = window.localStorage.getItem(key)
-    return raw ? JSON.parse(raw) : fallback
-  } catch { return fallback }
+const SINCE_DAYS = 120
+function sinceDate() {
+  const d = new Date()
+  d.setDate(d.getDate() - SINCE_DAYS)
+  return d.toISOString().slice(0, 10)
 }
 
-function persist(key: string, value: unknown) {
-  try { window.localStorage.setItem(key, JSON.stringify(value)) } catch {}
+async function api(path: string, options?: RequestInit) {
+  const res = await fetch(path, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) },
+  })
+  if (!res.ok) throw new Error(await res.text().catch(() => 'Request failed'))
+  return res.json()
+}
+
+function logsToMap(rows: HabitLog[]): LogMap {
+  const map: LogMap = {}
+  for (const r of rows) {
+    if (!map[r.date]) map[r.date] = {}
+    map[r.date][r.habit_id] = { done: r.done, skipped: r.skipped, note: r.note }
+  }
+  return map
+}
+
+function summariesToMap(rows: DaySummary[]): SummaryMap {
+  const map: SummaryMap = {}
+  for (const r of rows) map[r.date] = { mood: r.mood, journal: r.journal }
+  return map
 }
 
 export function useLogs() {
@@ -23,47 +39,56 @@ export function useLogs() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    setLogs(loadJSON<LogMap>(LOGS_KEY, {}))
-    setSummaries(loadJSON<SummaryMap>(SUMMARIES_KEY, {}))
-    setLoading(false)
+    const since = sinceDate()
+    Promise.all([api(`/api/logs?since=${since}`), api(`/api/summaries?since=${since}`)])
+      .then(([logRows, summaryRows]) => {
+        setLogs(logsToMap(logRows))
+        setSummaries(summariesToMap(summaryRows))
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
   }, [])
 
   const toggleLog = useCallback(async (habitId: string, date: string) => {
     setLogs(prev => {
       const cur = prev[date]?.[habitId]
       const dayEntry = { ...(prev[date] || {}), [habitId]: { done: !cur?.done, skipped: false, note: cur?.note ?? null } }
-      const next = { ...prev, [date]: dayEntry }
-      persist(LOGS_KEY, next)
-      return next
+      return { ...prev, [date]: dayEntry }
     })
+    try {
+      const updated: HabitLog = await api('/api/logs/toggle', { method: 'POST', body: JSON.stringify({ habitId, date }) })
+      setLogs(prev => ({ ...prev, [date]: { ...(prev[date] || {}), [habitId]: { done: updated.done, skipped: updated.skipped, note: updated.note } } }))
+    } catch {}
   }, [])
 
   const skipLog = useCallback(async (habitId: string, date: string) => {
     setLogs(prev => {
       const cur = prev[date]?.[habitId]
       const dayEntry = { ...(prev[date] || {}), [habitId]: { done: false, skipped: !cur?.skipped, note: cur?.note ?? null } }
-      const next = { ...prev, [date]: dayEntry }
-      persist(LOGS_KEY, next)
-      return next
+      return { ...prev, [date]: dayEntry }
     })
+    try {
+      const updated: HabitLog = await api('/api/logs/skip', { method: 'POST', body: JSON.stringify({ habitId, date }) })
+      setLogs(prev => ({ ...prev, [date]: { ...(prev[date] || {}), [habitId]: { done: updated.done, skipped: updated.skipped, note: updated.note } } }))
+    } catch {}
   }, [])
 
   const saveNote = useCallback(async (habitId: string, date: string, note: string) => {
     setLogs(prev => {
       const cur = prev[date]?.[habitId]
       const dayEntry = { ...(prev[date] || {}), [habitId]: { done: cur?.done ?? false, skipped: cur?.skipped ?? false, note } }
-      const next = { ...prev, [date]: dayEntry }
-      persist(LOGS_KEY, next)
-      return next
+      return { ...prev, [date]: dayEntry }
     })
+    try {
+      await api('/api/logs/note', { method: 'POST', body: JSON.stringify({ habitId, date, note }) })
+    } catch {}
   }, [])
 
   const saveDaySummary = useCallback(async (date: string, mood: number | null, journal: string) => {
-    setSummaries(prev => {
-      const next = { ...prev, [date]: { mood, journal } }
-      persist(SUMMARIES_KEY, next)
-      return next
-    })
+    setSummaries(prev => ({ ...prev, [date]: { mood, journal } }))
+    try {
+      await api('/api/summaries', { method: 'POST', body: JSON.stringify({ date, mood, journal }) })
+    } catch {}
   }, [])
 
   return { logs, summaries, loading, toggleLog, skipLog, saveNote, saveDaySummary }
