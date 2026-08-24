@@ -7,12 +7,12 @@
 ──────────────────────────────────────────────────────────── */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Database, Habit, HabitInsert, HabitUpdate,
+import type { Habit, HabitInsert, HabitUpdate,
               HabitLog, HabitLogUpdate, DaySummary,
               DaySummaryUpdate, Todo, TodoInsert, TodoUpdate } from './types'
 import { USER_ID } from './supabaseAdmin'
 
-type DB = SupabaseClient<Database>
+type DB = SupabaseClient
 
 /* ── Habits ─────────────────────────────────────────────── */
 
