@@ -1,7 +1,8 @@
 ﻿'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { T } from '@/lib/constants'
 import { NeuBtn, NeuToggle } from '@/components/ui/Neu'
+import { browserSupportsWebAuthn, startRegistration } from '@simplewebauthn/browser'
 
 const KEYS = ['petrichor-habits', 'petrichor-logs', 'petrichor-summaries', 'petrichor-todos']
 
@@ -17,6 +18,37 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 export default function SettingsPage() {
   const [reminders, setReminders] = useState(true)
   const [confirmClear, setConfirmClear] = useState(false)
+  const [webauthnAvailable, setWebauthnAvailable] = useState(false)
+  const [registering, setRegistering] = useState(false)
+  const [registerMsg, setRegisterMsg] = useState<string | null>(null)
+
+  useEffect(() => { setWebauthnAvailable(browserSupportsWebAuthn()) }, [])
+
+  const registerDevice = async () => {
+    setRegistering(true)
+    setRegisterMsg(null)
+    try {
+      const optionsRes = await fetch('/api/auth/webauthn/register-options', { method: 'POST' })
+      if (!optionsRes.ok) throw new Error('Could not start registration')
+      const optionsJSON = await optionsRes.json()
+
+      const attestation = await startRegistration({ optionsJSON })
+
+      const deviceName = typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 40) : 'This device'
+      const verifyRes = await fetch('/api/auth/webauthn/register-verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ response: attestation, deviceName }),
+      })
+      if (verifyRes.ok) setRegisterMsg('Fingerprint / Face ID enabled for this device.')
+      else setRegisterMsg('Registration failed — try again.')
+    } catch {
+      setRegisterMsg('Cancelled or not supported on this device.')
+    } finally {
+      setRegistering(false)
+    }
+  }
+
 
   const handleExport = () => {
     const data: Record<string, unknown> = {}
@@ -49,6 +81,20 @@ export default function SettingsPage() {
         <Row label="Daily reminders">
           <NeuToggle on={reminders} onToggle={() => setReminders(v => !v)} />
         </Row>
+      </div>
+
+      <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.14em', color: T.fgDim, textTransform: 'uppercase', marginBottom: 10 }}>Security</div>
+      <div style={{ marginBottom: 24 }}>
+        {webauthnAvailable ? (
+          <>
+            <NeuBtn onClick={registerDevice} disabled={registering} style={{ width: '100%' }}>
+              {registering ? 'Follow the prompt\u2026' : 'Enable fingerprint / Face ID on this device'}
+            </NeuBtn>
+            {registerMsg && <div style={{ fontSize: 12, color: T.fgDim, marginTop: 8 }}>{registerMsg}</div>}
+          </>
+        ) : (
+          <div style={{ fontSize: 12, color: T.fgDim }}>Fingerprint/Face ID isn&apos;t available on this browser — PIN still works everywhere.</div>
+        )}
       </div>
 
       <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.14em', color: T.fgDim, textTransform: 'uppercase', marginBottom: 10 }}>Data</div>
