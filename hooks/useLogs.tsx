@@ -1,5 +1,5 @@
 ﻿'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
 import type { LogMap, SummaryMap, HabitLog, DaySummary } from '@/lib/types'
 
 const SINCE_DAYS = 120
@@ -33,7 +33,19 @@ function summariesToMap(rows: DaySummary[]): SummaryMap {
   return map
 }
 
-export function useLogs() {
+interface LogsContextValue {
+  logs: LogMap
+  summaries: SummaryMap
+  loading: boolean
+  toggleLog: (habitId: string, date: string) => Promise<void>
+  skipLog: (habitId: string, date: string) => Promise<void>
+  saveNote: (habitId: string, date: string, note: string) => Promise<void>
+  saveDaySummary: (date: string, mood: number | null, journal: string) => Promise<void>
+}
+
+const LogsContext = createContext<LogsContextValue | null>(null)
+
+export function LogsProvider({ children }: { children: ReactNode }) {
   const [logs, setLogs] = useState<LogMap>({})
   const [summaries, setSummaries] = useState<SummaryMap>({})
   const [loading, setLoading] = useState(true)
@@ -91,5 +103,15 @@ export function useLogs() {
     } catch {}
   }, [])
 
-  return { logs, summaries, loading, toggleLog, skipLog, saveNote, saveDaySummary }
+  return (
+    <LogsContext.Provider value={{ logs, summaries, loading, toggleLog, skipLog, saveNote, saveDaySummary }}>
+      {children}
+    </LogsContext.Provider>
+  )
+}
+
+export function useLogs() {
+  const ctx = useContext(LogsContext)
+  if (!ctx) throw new Error('useLogs must be used within LogsProvider')
+  return ctx
 }

@@ -1,5 +1,5 @@
 ﻿'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
 import type { Habit, HabitInsert, HabitUpdate } from '@/lib/types'
 
 async function api(path: string, options?: RequestInit) {
@@ -11,7 +11,18 @@ async function api(path: string, options?: RequestInit) {
   return res.json()
 }
 
-export function useHabits() {
+interface HabitsContextValue {
+  habits: Habit[]
+  loading: boolean
+  addHabit: (data: HabitInsert) => Promise<void>
+  updateHabit: (id: string, data: HabitUpdate) => Promise<void>
+  removeHabit: (id: string) => Promise<void>
+  reorderHabits: (next: Habit[]) => void
+}
+
+const HabitsContext = createContext<HabitsContextValue | null>(null)
+
+export function HabitsProvider({ children }: { children: ReactNode }) {
   const [habits, setHabits] = useState<Habit[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -46,5 +57,15 @@ export function useHabits() {
     }).catch(() => {})
   }, [])
 
-  return { habits, loading, addHabit, updateHabit, removeHabit, reorderHabits }
+  return (
+    <HabitsContext.Provider value={{ habits, loading, addHabit, updateHabit, removeHabit, reorderHabits }}>
+      {children}
+    </HabitsContext.Provider>
+  )
+}
+
+export function useHabits() {
+  const ctx = useContext(HabitsContext)
+  if (!ctx) throw new Error('useHabits must be used within HabitsProvider')
+  return ctx
 }
